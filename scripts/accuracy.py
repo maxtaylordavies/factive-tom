@@ -20,7 +20,7 @@ sns.set_theme(style="darkgrid")
 
 def get_keys():
     seed = int(time.time())
-    s_key, a_key, d_key = jr.split(jr.PRNGKey(seed), 3)
+    s_key, a_key, d_key = jr.split(jr.key(seed), 3)
     return seed, s_key, a_key, d_key
 
 
@@ -44,29 +44,55 @@ def compute_acc_vals(
             b_preds = jax.vmap(
                 predict_choice_belief, in_axes=(None, 0, 0, 0, None, None)
             )(S, s_vals, a_vals, d_vals, d_func, default_func)
-            k_preds = jax.vmap(predict_choice_knowledge, in_axes=(None, 0, 0, 0, None))(
-                S, s_vals, a_vals, d_vals, default_func
-            )
+            k_preds_without_d = jax.vmap(
+                predict_choice_knowledge, in_axes=(None, 0, 0, None, None)
+            )(S, s_vals, a_vals, 0, default_func)
+            k_preds_with_d = jax.vmap(
+                predict_choice_knowledge, in_axes=(None, 0, 0, 0, None)
+            )(S, s_vals, a_vals, d_vals, default_func)
 
-            data.append(
-                {
-                    "seed": seed,
-                    "P(access)": float(a_prob),
-                    "P(distractor)": float(d_prob),
-                    "Accuracy": float(jnp.mean(b_preds == k_preds)),
-                }
-            )
+            acc_without_d = float(jnp.mean(k_preds_without_d == b_preds))
+            acc_with_d = float(jnp.mean(k_preds_with_d == b_preds))
+
+            tmp = {
+                "seed": seed,
+                "P(access)": float(a_prob),
+                "P(distractor)": float(d_prob),
+            }
+
+            data.append({**tmp, "d": False, "Accuracy": acc_without_d})
+            data.append({**tmp, "d": True, "Accuracy": acc_with_d})
 
     return pd.DataFrame(data)
 
 
-S = jnp.array([10, 20])  # state space
-d_func = lambda S, s: 30  # distractor function
-default_func = lambda S: 20  # default function
+def make_plots(df, title, save_path):
+    fig, ax = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+    flare = sns.color_palette("flare", as_cmap=True)
+    crest = sns.color_palette("crest", as_cmap=True)
+    sns.lineplot(
+        df, x="P(distractor)", y="Accuracy", hue="P(access)", ax=ax[0], palette=flare
+    )
+    sns.lineplot(
+        df, x="P(access)", y="Accuracy", hue="P(distractor)", ax=ax[1], palette=crest
+    )
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(save_path)
+
+
+S = jnp.array([10, -10])  # state space
+d_func = lambda S, s: -s  # distractor function
+default_func = lambda S: 10  # default function
 
 df = compute_acc_vals(S, d_func, default_func)
-
-fig, ax = plt.subplots()
-sns.lineplot(df, x="P(distractor)", y="Accuracy", hue="P(access)", ax=ax)
-ax.set(title="Relative accuracy of factive ToM")
-plt.show()
+make_plots(
+    df[df["d"] == False],
+    "Relative accuracy of factive ToM (d-unaware)",
+    "accuracy_d_unaware.pdf",
+)
+make_plots(
+    df[df["d"] == True],
+    "Relative accuracy of factive ToM (d-aware)",
+    "accuracy_d_aware.pdf",
+)
